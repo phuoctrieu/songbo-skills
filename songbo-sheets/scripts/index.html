@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body>
+<script>
+/* =========================================================================
+   Cầu nối AI Edge Gallery  ->  Google Sheet (qua REST API trên Apps Script)
+   Hệ thống Lịch công tác NMTĐ Sông Bồ.
+
+   ⬇️ BẮT BUỘC: dán URL Web App /exec của bạn vào đây trước khi host.
+   ========================================================================= */
+const GAS_URL = "https://script.google.com/macros/s/AKfycbzg8OaoWvs9iJI05WmlLgAWUFDDKh_uw6MFvTKvaMuCCDdlKH2OwtxuVufHXzxcAmju/exec";
+
+/* Chuyển các từ ngày tương đối sang YYYY-MM-DD (mô hình on-device hay sai ngày) */
+function normalizeDate(v) {
+  if (!v) return "";
+  const s = String(v).trim().toLowerCase();
+  const d = new Date();
+  const fmt = (x) => {
+    const y = x.getFullYear(), m = String(x.getMonth() + 1).padStart(2, "0"), day = String(x.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+  if (["hôm nay", "hom nay", "today", "nay"].includes(s)) return fmt(d);
+  if (["ngày mai", "ngay mai", "mai", "tomorrow"].includes(s)) { d.setDate(d.getDate() + 1); return fmt(d); }
+  if (["hôm qua", "hom qua", "yesterday"].includes(s)) { d.setDate(d.getDate() - 1); return fmt(d); }
+  if (["ngày kia", "ngay kia"].includes(s)) { d.setDate(d.getDate() + 2); return fmt(d); }
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
+  return v; // để nguyên, server tự xử lý
+}
+
+const READ_ACTIONS = ["list", "getbydate", "dashboard", "monthly", "nhanvien", "config"];
+
+window["ai_edge_gallery_get_result"] = async (dataStr, secret) => {
+  try {
+    const data = JSON.parse(dataStr || "{}");
+    const action = String(data.action || "list").toLowerCase();
+    const apikey = secret || "";
+
+    // Chuẩn hoá ngày cho mọi trường ngày
+    if (data.date) data.date = normalizeDate(data.date);
+    if (data.ngay) data.ngay = normalizeDate(data.ngay);
+
+    let res;
+    if (READ_ACTIONS.includes(action)) {
+      const params = new URLSearchParams({ action });
+      if (apikey) params.set("apikey", apikey);
+      ["date", "year", "month"].forEach((k) => { if (data[k]) params.set(k, data[k]); });
+      res = await fetch(`${GAS_URL}?${params.toString()}`, { method: "GET" });
+    } else {
+      // add / update / delete / complete  -> POST text/plain (tránh CORS preflight)
+      const payload = Object.assign({}, data);
+      if (apikey) payload.apikey = apikey;
+      res = await fetch(GAS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload)
+      });
+    }
+
+    const json = await res.json();
+    // Trả về phần data đã sạch để mô hình dễ đọc, kèm cờ thành công
+    return JSON.stringify({
+      result: {
+        success: json.success,
+        message: json.message,
+        data: json.data
+      }
+    });
+  } catch (e) {
+    return JSON.stringify({ error: `Lỗi gọi Google Sheet: ${e.message}` });
+  }
+};
+</script>
+</body>
+</html>
